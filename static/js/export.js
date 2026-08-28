@@ -113,5 +113,81 @@ ${wallModels}
     URL.revokeObjectURL(url);
   }
 
-  window.BuildingEditorExport = { wallsToSDF, downloadSDF };
+  // --- Webots (.wbt) export ---
+  // SDF版と全く同じ x=x, y=y, z=height の意味で座標を書けるよう、
+  // WorldInfo.coordinateSystem を明示的に "ENU"（Z-up。Webots R2022a以降で選択可能）に固定する。
+  // 未検証: 実際にWebotsで読み込み、壁の位置・向き・高さがSDF版と一致するか確認すること。
+  // ズレる場合はここの座標系解釈（ENUの軸の割り当て）を疑うこと。
+  function wallToSolidWbt(wall, index, wallHeight) {
+    const dx = wall.x2 - wall.x1;
+    const dy = wall.y2 - wall.y1;
+    const length = Math.hypot(dx, dy);
+    const yaw = Math.atan2(dy, dx);
+    const cx = (wall.x1 + wall.x2) / 2;
+    const cy = (wall.y1 + wall.y2) / 2;
+    const cz = wallHeight / 2;
+
+    return `  Solid {
+    translation ${cx.toFixed(4)} ${cy.toFixed(4)} ${cz.toFixed(4)}
+    rotation 0 0 1 ${yaw.toFixed(6)}
+    name "wall_${index}"
+    children [
+      Shape {
+        appearance PBRAppearance {
+          baseColor 0.8 0.8 0.8
+          roughness 1
+          metalness 0
+        }
+        geometry Box {
+          size ${length.toFixed(4)} ${wall.thickness.toFixed(4)} ${wallHeight.toFixed(4)}
+        }
+      }
+    ]
+    boundingObject Box {
+      size ${length.toFixed(4)} ${wall.thickness.toFixed(4)} ${wallHeight.toFixed(4)}
+    }
+  }`;
+  }
+
+  function wallsToWBT(walls, options) {
+    const { worldName = "building_editor_world", wallHeight = 2.5 } = options || {};
+    const wallSolids = walls.map((w, i) => wallToSolidWbt(w, i, wallHeight)).join("\n");
+
+    return `#VRML_SIM R2023b utf8
+# building_editor から書き出したワールド。
+# SDF版(building.sdf)と同一座標になるよう coordinateSystem を ENU(Z-up) に固定している。
+# 要検証: Webotsで開いて壁の位置・向きがSDF版と一致するか確認すること。
+
+WorldInfo {
+  coordinateSystem "ENU"
+  title "${worldName}"
+}
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.7
+  position -5 -5 8
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+Floor {
+  size 100 100
+}
+${wallSolids}
+`;
+  }
+
+  function downloadWBT(wbtText, filename) {
+    const blob = new Blob([wbtText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  window.BuildingEditorExport = { wallsToSDF, downloadSDF, wallsToWBT, downloadWBT };
 })();

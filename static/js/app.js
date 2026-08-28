@@ -7,6 +7,7 @@
   const wallHeightInput = document.getElementById("wall-height");
   const clearBtn = document.getElementById("clear-btn");
   const exportBtn = document.getElementById("export-btn");
+  const exportWbtBtn = document.getElementById("export-wbt-btn");
   const statusText = document.getElementById("status-text");
 
   const PIXELS_PER_METER = 50;
@@ -178,6 +179,17 @@
     const sdf = window.BuildingEditorExport.wallsToSDF(walls, { wallHeight });
     window.BuildingEditorExport.downloadSDF(sdf, "building.sdf");
     statusText.textContent = `SDFをダウンロードしました (壁 ${walls.length}本)`;
+  });
+
+  exportWbtBtn.addEventListener("click", () => {
+    if (walls.length === 0) {
+      statusText.textContent = "壁がありません。先に壁を描いてください。";
+      return;
+    }
+    const wallHeight = Math.max(0.1, parseFloat(wallHeightInput.value) || 2.5);
+    const wbt = window.BuildingEditorExport.wallsToWBT(walls, { wallHeight });
+    window.BuildingEditorExport.downloadWBT(wbt, "building.wbt");
+    statusText.textContent = `Webots(.wbt)をダウンロードしました (壁 ${walls.length}本)`;
   });
 
   resizeCanvas();
