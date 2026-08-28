@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Building Editor</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <h1>Building Editor</h1>
+    <div class="toolbar-group">
+      <label><input type="checkbox" id="snap-toggle" checked> グリッドスナップ</label>
+      <label>グリッド間隔 (m)
+        <input type="number" id="grid-size" value="1" min="0.1" step="0.1">
+      </label>
+      <label>壁の厚み (m)
+        <input type="number" id="wall-thickness" value="0.1" min="0.01" step="0.01">
+      </label>
+      <label>壁の高さ (m)
+        <input type="number" id="wall-height" value="1.0" min="0.1" step="0.1">
+      </label>
+      <button id="clear-btn">クリア</button>
+      <button id="export-btn">SDFエクスポート</button>
+    </div>
+  </header>
+
+  <main>
+    <canvas id="editor-canvas"></canvas>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-text">クリックで壁の始点、もう一度クリックで終点</span>
+  </footer>
+
+  <script src="/static/js/export.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
