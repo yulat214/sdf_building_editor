@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8">
   <title>Building Editor</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=11">
+  <script type="importmap">
+    { "imports": { "three": "/static/vendor/three/three.module.js" } }
+  </script>
 </head>
 <body>
   <header class="toolbar">
     <h1>Building Editor</h1>
     <div class="toolbar-group">
-      <label><input type="checkbox" id="snap-toggle" checked> グリッドスナップ</label>
       <label>グリッド間隔 (m)
         <input type="number" id="grid-size" value="1" min="0.1" step="0.1">
       </label>
@@ -19,21 +21,67 @@
       <label>壁の高さ (m)
         <input type="number" id="wall-height" value="1.0" min="0.1" step="0.1">
       </label>
+      <label>ドアの高さ (m)
+        <input type="number" id="door-height" value="2.0" min="0.1" step="0.1">
+      </label>
+      <span class="toolbar-radio-group">
+        <label><input type="radio" name="draw-mode" id="draw-mode-wall" value="wall" checked> 壁</label>
+        <label><input type="radio" name="draw-mode" id="draw-mode-door" value="door"> ドア</label>
+      </span>
+      <label>回転 (度)
+        <input type="number" id="object-rotation" value="0" step="15" title="配置済みオブジェクトを選択中はその向きを編集、それ以外は次に配置するオブジェクトの向き">
+      </label>
+      <label>高さの微調整 (m)
+        <input type="number" id="object-height" value="0" step="0.05" title="配置済みオブジェクトをクリックして選択中は、その高さを直接編集できる。それ以外は次に配置するオブジェクトの上乗せ分(通常0、机の上などは自動検出される)">
+      </label>
+      <button id="robot-btn" title="クリックした場所にロボットの開始位置(向き付き)を1つ配置する。既にあれば置き直す。ドラッグで移動・スクロールで回転できる">ロボット開始位置</button>
       <button id="clear-btn">クリア</button>
-      <button id="export-btn">SDFエクスポート</button>
-      <button id="export-wbt-btn">Webots(.wbt)エクスポート</button>
+      <button id="preview-btn">3Dプレビュー</button>
+      <span class="export-dropdown">
+        <button id="export-btn">エクスポート ▾</button>
+        <div id="export-menu" class="export-menu" hidden>
+          <button id="export-sdf-item">SDF (.sdf)</button>
+          <button id="export-wbt-item">Webots (.wbt)</button>
+          <button id="export-both-item">両方 (.zip)</button>
+        </div>
+      </span>
     </div>
   </header>
 
   <main>
+    <aside class="catalog-panel">
+      <h2>オブジェクトカタログ</h2>
+      <input type="search" id="catalog-search" placeholder="検索 (名前・カテゴリ)">
+      <div id="catalog-preview" class="catalog-preview" hidden>
+        <img id="catalog-preview-img" class="catalog-preview-img" alt="">
+        <div class="catalog-preview-name" id="catalog-preview-name"></div>
+        <div class="catalog-preview-category" id="catalog-preview-category"></div>
+        <div class="catalog-preview-actions">
+          <button id="catalog-place-btn">ワールドに配置</button>
+          <button id="catalog-cache-btn">ライブラリに追加</button>
+        </div>
+        <p id="catalog-preview-status" class="catalog-preview-status"></p>
+      </div>
+      <div id="catalog-list" class="catalog-list"></div>
+    </aside>
     <canvas id="editor-canvas"></canvas>
   </main>
 
+  <div id="preview-modal" class="preview-modal" hidden>
+    <div class="preview-modal-header">
+      <span>3Dプレビュー (読み取り専用。ドラッグで回転・スクロールでズーム)</span>
+      <button id="preview-close-btn">閉じる</button>
+    </div>
+    <canvas id="preview-canvas"></canvas>
+  </div>
+
   <footer class="statusbar">
     <span id="status-text">クリックで壁の始点、もう一度クリックで終点</span>
+    <span class="statusbar-help">オブジェクト: クリックで選択 / ドラッグで移動 / 右クリックで削除 / スクロールで回転・ズーム / Shift+ドラッグでパン</span>
   </footer>
 
-  <script src="/static/js/export.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/export.js?v=11"></script>
+  <script src="/static/js/app.js?v=11"></script>
+  <script type="module" src="/static/js/preview.js?v=11"></script>
 </body>
 </html>

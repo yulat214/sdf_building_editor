@@ -32,14 +32,26 @@ body {
 
 .toolbar-group {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 8px 16px;
   font-size: 13px;
 }
 
 .toolbar-group input[type="number"] {
   width: 64px;
   margin-left: 4px;
+}
+
+.toolbar-radio-group {
+  display: flex;
+  gap: 8px;
+}
+
+.toolbar-radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 button {
@@ -55,13 +67,199 @@ button:hover {
   background: #4a4a4a;
 }
 
+.export-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  background: #2a2a2a;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.export-menu button {
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  padding: 8px 12px;
+}
+
 main {
   flex: 1;
+  display: flex;
+  flex-direction: row;
   overflow: hidden;
+}
+
+.catalog-panel {
+  width: 320px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  background: #232323;
+  border-right: 1px solid #3a3a3a;
+  overflow: hidden;
+}
+
+.catalog-panel h2 {
+  font-size: 13px;
+  margin: 0 0 8px;
+  color: #ccc;
+}
+
+#catalog-search {
+  margin-bottom: 8px;
+  padding: 4px 6px;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+}
+
+.catalog-preview {
+  flex: none;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: #1e1e1e;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+}
+
+.catalog-preview-img {
+  display: block;
+  width: 100%;
+  height: 150px;
+  object-fit: contain;
+  background: #111;
+  border-radius: 3px;
+}
+
+.catalog-preview-name {
+  margin-top: 6px;
+  font-weight: 600;
+  color: #e8e8e8;
+}
+
+.catalog-preview-category {
+  font-size: 11px;
+  color: #999;
+}
+
+.catalog-preview-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.catalog-preview-actions button {
+  flex: 1;
+  padding: 6px 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.catalog-preview-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.catalog-preview-status {
+  margin: 6px 0 0;
+  min-height: 1.3em;
+  font-size: 11px;
+  color: #5fb0ff;
+}
+
+.catalog-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.catalog-item.focused {
+  background: #333;
+  border-color: #777;
+}
+
+.catalog-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+
+.catalog-item:hover {
+  background: #2f2f2f;
+}
+
+.catalog-item.selected {
+  background: #2f4a6b;
+  border-color: #5fb0ff;
+}
+
+.catalog-item-thumb {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  object-fit: contain;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+}
+
+.catalog-item-thumb-missing {
+  visibility: hidden;
+}
+
+.catalog-item-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.catalog-item .catalog-item-name {
+  display: block;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-item .catalog-item-category {
+  display: block;
+  color: #999;
+  font-size: 11px;
+}
+
+.catalog-item .catalog-item-cached {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #2f7d32;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 #editor-canvas {
   display: block;
+  flex: 1;
   width: 100%;
   height: 100%;
   background: #202020;
@@ -69,9 +267,50 @@ main {
 }
 
 .statusbar {
+  display: flex;
+  gap: 16px;
   padding: 4px 16px;
   background: #2a2a2a;
   border-top: 1px solid #3a3a3a;
   font-size: 12px;
   color: #999;
+}
+
+.statusbar-help {
+  color: #666;
+}
+
+.preview-modal[hidden] {
+  display: none;
+}
+
+.preview-modal {
+  position: fixed;
+  inset: 24px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a1a;
+  border: 1px solid #4a4a4a;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.preview-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #2a2a2a;
+  border-bottom: 1px solid #3a3a3a;
+  font-size: 12px;
+  color: #ccc;
+}
+
+#preview-canvas {
+  flex: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
