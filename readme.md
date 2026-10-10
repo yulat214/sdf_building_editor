@@ -14,12 +14,33 @@ python3 main.py
 ブラウザを開き、localhost:8080にアクセスする
 
 ## その他
-環境変数`BUILDING_EDITOR_PORT`で使用するポートを選択できる。
+環境変数`BUILDING_EDITOR_PORT`で使用するポートを選択できる(`3000`はOneStageROSが使うので避ける)。
 
 例：
 ```
-BUILDING_EDITOR_PORT=3000 python3 main.py
+BUILDING_EDITOR_PORT=8081 python3 main.py
 ```
+
+## アクセス制限
+
+OneStageROS(2.0.0以降)と同じ考え方で、次の制限を掛けている。
+
+- **待ち受けアドレス**: 既定では`127.0.0.1`(このPCからのみ)。Dockerコンテナ内で動かして
+  ホスト機のブラウザから使う場合や、別のPCから使う場合は`BUILDING_EDITOR_EXPOSE=true`を設定する。
+  ```
+  BUILDING_EDITOR_EXPOSE=true python3 main.py
+  ```
+- **アクセス元の確認**: `localhost`・IPアドレス以外のHost名でのアクセス(DNS rebinding)と、
+  他のWebサイトや同じPCの別ポート(OneStageROSの画面等)から送られたリクエストは`403`で拒否する。
+- **ログイン(任意)**: `BUILDING_EDITOR_AUTH=token`を設定すると、画面を開くときにトークンの入力が
+  必要になる。ネットワークに公開する(`BUILDING_EDITOR_EXPOSE=true`)場合は設定すること。
+  ```
+  BUILDING_EDITOR_EXPOSE=true BUILDING_EDITOR_AUTH=token python3 main.py
+  python3 main.py token          # トークンを表示
+  python3 main.py token --reset  # トークンを再発行(起動中のサーバーは再起動が必要)
+  ```
+  トークンは`~/.config/sdf-building-editor/token`に保存される。
+  `http://localhost:8080/login#token=<トークン>`で開くと入力を省略できる。
 
 ## オブジェクトカタログ
 

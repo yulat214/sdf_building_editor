@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Building Editor - ログイン</title>
+  <!-- 未ログインでは /static を読めないため、スタイル・スクリプトはこのファイルに直接書く -->
+  <style>
+    body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f4f4f4; }
+    form { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.15); width: 320px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    p { font-size: 13px; color: #555; }
+    input { width: 100%; box-sizing: border-box; padding: 8px; margin: 8px 0; }
+    button { width: 100%; padding: 8px; }
+    #error { color: #c00; min-height: 1em; }
+  </style>
+</head>
+<body>
+  <form id="login-form">
+    <h1>Building Editor</h1>
+    <p>トークンを入力してください。トークンは <code>python3 main.py token</code> で表示できます。</p>
+    <input type="password" id="token" autocomplete="current-password" autofocus required>
+    <button type="submit">ログイン</button>
+    <p id="error"></p>
+  </form>
+  <script>
+    async function login(token) {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      if (res.ok) {
+        location.replace("/");
+        return;
+      }
+      document.getElementById("error").textContent =
+        res.status === 429 ? "試行回数が多すぎます。しばらく待ってから再度お試しください。" : "トークンが正しくありません。";
+    }
+
+    document.getElementById("login-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      login(document.getElementById("token").value);
+    });
+
+    // http://localhost:8080/login#token=... で開いた場合はそのままログインする(OneStageROS と同じ)
+    const m = location.hash.match(/token=([^&]+)/);
+    if (m) {
+      history.replaceState(null, "", location.pathname);
+      login(decodeURIComponent(m[1]));
+    }
+  </script>
+</body>
+</html>

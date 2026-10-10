@@ -1,7 +1,12 @@
+import hashlib
+import hmac
 import io
 import json
 import os
 import re
+import secrets
+import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -9,9 +14,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from PIL import Image
 from pydantic import BaseModel
 
@@ -514,6 +519,105 @@ def is_cached(owner: str, name: str) -> bool:
     return mesh_path is not None
 
 
+# --- アクセス制限(OneStageROS の server/auth.js と同じ考え方) ---
+# BUILDING_EDITOR_EXPOSE: false(既定)ならこのPC(127.0.0.1)からのみ。Docker のホスト機や
+#   別のPCから使う場合は true にする。
+# BUILDING_EDITOR_AUTH=token: 画面を開くときにトークンの入力を求める(ネットワークに公開する場合用)。
+EXPOSE = re.fullmatch(r"(1|true|yes|on)", os.environ.get("BUILDING_EDITOR_EXPOSE", "").strip(), re.I) is not None
+AUTH_ENABLED = os.environ.get("BUILDING_EDITOR_AUTH", "").strip().lower() == "token"
+
+TOKEN_PATH = Path.home() / ".config" / "sdf-building-editor" / "token"
+COOKIE_NAME = "building_editor_session"
+COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def is_allowed_host(host_header: str) -> bool:
+    # localhost か IP アドレスでのアクセスだけを許可する(DNS rebinding 対策)。
+    # 攻撃者のドメインを 127.0.0.1 に向けてこのサーバーを読み書きする攻撃では、Host が攻撃者のドメインになる。
+    try:
+        hostname = urllib.parse.urlsplit(f"http://{host_header}").hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return True
+    if IPV4_RE.match(hostname):
+        return True
+    return ":" in hostname  # IPv6 リテラル([::1] 等。urlsplit は角括弧を外して返す)
+
+
+def is_same_origin_request(request: Request) -> bool:
+    # 他の Web サイトや、同じ PC の別ポート(OneStageROS 等)のページからのリクエストを拒否する。
+    # ブラウザ以外(curl など)はヘッダーを偽装できるため、ネットワークからの保護は待ち受けアドレスとログインで行う。
+    site = request.headers.get("sec-fetch-site")
+    if site and site not in ("same-origin", "none"):
+        return False
+    origin = request.headers.get("origin")
+    if not origin:
+        return True
+    try:
+        return urllib.parse.urlsplit(origin).netloc == request.headers.get("host", "")
+    except ValueError:
+        return False
+
+
+def write_token(token: str, exclusive: bool):
+    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+    fd = os.open(TOKEN_PATH, flags, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token + "\n")
+
+
+def load_or_create_token() -> str:
+    try:
+        token = TOKEN_PATH.read_text().strip()
+        if token:
+            return token
+    except FileNotFoundError:
+        pass
+    try:
+        write_token(secrets.token_urlsafe(24), exclusive=True)
+    except FileExistsError:
+        pass
+    return TOKEN_PATH.read_text().strip()
+
+
+def session_value(token: str) -> str:
+    # Cookie にはトークンそのものではなく、トークンから導出した値を入れる
+    return hmac.new(token.encode(), b"building-editor-session", hashlib.sha256).hexdigest()
+
+
+ACCESS_TOKEN = load_or_create_token() if AUTH_ENABLED else None
+
+
+def has_valid_session(request: Request) -> bool:
+    if not AUTH_ENABLED:
+        return True
+    value = request.cookies.get(COOKIE_NAME, "")
+    return hmac.compare_digest(value, session_value(ACCESS_TOKEN))
+
+
+# ログインの総当たり対策(IPごとに1分あたり10回まで)
+LOGIN_WINDOW_SEC = 60
+LOGIN_MAX_ATTEMPTS = 10
+_login_attempts = {}
+
+
+def login_rate_limited(ip: str) -> bool:
+    now = time.monotonic()
+    recent = [t for t in _login_attempts.get(ip, []) if now - t < LOGIN_WINDOW_SEC]
+    recent.append(now)
+    _login_attempts[ip] = recent
+    return len(recent) > LOGIN_MAX_ATTEMPTS
+
+
+# ログイン無しで開けるパス(ログイン画面とログインAPIだけ)
+PUBLIC_PATHS = {"/login", "/api/auth/login"}
+
+
 app = FastAPI(title="Building Editor")
 
 
@@ -528,6 +632,46 @@ async def no_cache_static(request, call_next):
         response.headers["Cache-Control"] = "no-store, must-revalidate"
     elif path.startswith("/static"):
         response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+# no_cache_static より後に登録して外側で動かし、拒否したリクエストは中まで通さない
+@app.middleware("http")
+async def access_control(request: Request, call_next):
+    if not (is_allowed_host(request.headers.get("host", "")) and is_same_origin_request(request)):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    path = request.url.path
+    if path not in PUBLIC_PATHS and not has_valid_session(request):
+        if path == "/":
+            return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
+class LoginRequest(BaseModel):
+    token: str
+
+
+@app.get("/login")
+def login_page():
+    if not AUTH_ENABLED:
+        return RedirectResponse("/", status_code=303)
+    return FileResponse(os.path.join(STATIC_DIR, "login.html"), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest, request: Request):
+    if not AUTH_ENABLED:
+        return {"ok": True}
+    if login_rate_limited(request.client.host if request.client else ""):
+        return JSONResponse({"error": "Too many attempts"}, status_code=429)
+    if not hmac.compare_digest(req.token.strip().encode(), ACCESS_TOKEN.encode()):
+        return JSONResponse({"error": "Invalid token"}, status_code=401)
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        COOKIE_NAME, session_value(ACCESS_TOKEN),
+        max_age=COOKIE_MAX_AGE, path="/", httponly=True, samesite="strict",
+    )
     return response
 
 
@@ -640,8 +784,26 @@ def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
+def print_token(reset: bool):
+    # python3 main.py token [--reset]
+    if reset:
+        write_token(secrets.token_urlsafe(24), exclusive=False)
+        print("トークンを再発行しました。ログイン中のブラウザは再ログインが必要です。")
+        print("起動中の building_editor は再起動してください。")
+    print(f"トークン: {load_or_create_token()}")
+    print(f"保存場所: {TOKEN_PATH}")
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["token"]:
+        print_token("--reset" in sys.argv[2:])
+        sys.exit(0)
+
     import uvicorn
 
     port = int(os.environ.get("BUILDING_EDITOR_PORT", "8080"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    host = "0.0.0.0" if EXPOSE else "127.0.0.1"
+    print(f"Listening on {host}:{port}" + ("" if EXPOSE else " (このPCからのみ。公開するには BUILDING_EDITOR_EXPOSE=true)"))
+    print("Login: enabled (BUILDING_EDITOR_AUTH=token)。トークンは python3 main.py token で表示できます"
+          if AUTH_ENABLED else "Login: disabled")
+    uvicorn.run("main:app", host=host, port=port, reload=False)
