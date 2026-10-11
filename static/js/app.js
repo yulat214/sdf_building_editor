@@ -15,10 +15,6 @@
   const previewModal = document.getElementById("preview-modal");
   const previewCloseBtn = document.getElementById("preview-close-btn");
   const exportBtn = document.getElementById("export-btn");
-  const exportMenu = document.getElementById("export-menu");
-  const exportSdfItem = document.getElementById("export-sdf-item");
-  const exportWbtItem = document.getElementById("export-wbt-item");
-  const exportBothItem = document.getElementById("export-both-item");
   const statusText = document.getElementById("status-text");
   const catalogSearch = document.getElementById("catalog-search");
   const catalogList = document.getElementById("catalog-list");
@@ -938,8 +934,6 @@
     if (evt.key !== "Escape") return;
     if (!saveModal.hidden) {
       closeSaveDialog();
-    } else if (!exportMenu.hidden) {
-      closeExportMenu();
     } else if (!previewModal.hidden) {
       closePreview();
     } else if (dragState) {
@@ -1069,27 +1063,13 @@
     return `壁 ${walls.length}本 / ドア ${doors.length}個 / オブジェクト ${objects.length}件`;
   }
 
-  function closeExportMenu() {
-    exportMenu.hidden = true;
-  }
-
-  exportBtn.addEventListener("click", (evt) => {
-    evt.stopPropagation();
-    exportMenu.hidden = !exportMenu.hidden;
-  });
-
-  document.addEventListener("click", () => closeExportMenu());
-  exportMenu.addEventListener("click", (evt) => evt.stopPropagation());
-
   // --- 保存ダイアログ ---
   // サーバ(=docker内)のファイルシステムへ直接保存する。保存先の初期値は
   // building_editorを起動したディレクトリで、前回保存したディレクトリを覚えておく。
   const saveModal = document.getElementById("save-modal");
-  const saveTitle = document.getElementById("save-title");
   const saveFilename = document.getElementById("save-filename");
   const saveExt = document.getElementById("save-ext");
-  const saveZipRow = document.getElementById("save-zip-row");
-  const saveZip = document.getElementById("save-zip");
+  const saveFormatRadios = document.querySelectorAll('input[name="save-format"]');
   const savePath = document.getElementById("save-path");
   const saveList = document.getElementById("save-list");
   const saveMessage = document.getElementById("save-message");
@@ -1097,8 +1077,8 @@
 
   const SAVE_DIR_KEY = "buildingEditor.exportDir";
   const SAVE_NAME_KEY = "buildingEditor.exportName";
-  const FORMAT_LABELS = { sdf: "SDF (.sdf)", wbt: "Webots (.wbt)", both: "SDF + Webots" };
-  let saveFormat = "sdf";
+  const SAVE_FORMAT_KEY = "buildingEditor.exportFormat";
+  const FORMAT_EXTS = { sdf: ".sdf", wbt: ".wbt", both: ".sdf / .wbt", zip: ".zip" };
   let saveDir = null;
   let saveStartDir = null;
   let saveParentDir = null;
@@ -1117,26 +1097,28 @@
     return saveFilename.value.trim().replace(/\.(sdf|wbt|zip)$/i, "");
   }
 
+  function saveFormat() {
+    const checked = document.querySelector('input[name="save-format"]:checked');
+    return checked ? checked.value : "sdf";
+  }
+
   function outputFiles() {
     const name = baseName();
     const options = exportOptions();
     const files = [];
-    if (saveFormat !== "wbt") {
+    const format = saveFormat();
+    if (format !== "wbt") {
       files.push({ name: `${name}.sdf`, text: window.BuildingEditorExport.wallsToSDF(walls, doors, objects, options) });
     }
-    if (saveFormat !== "sdf") {
+    if (format !== "sdf") {
       files.push({ name: `${name}.wbt`, text: window.BuildingEditorExport.wallsToWBT(walls, doors, objects, options) });
     }
-    const zipName = saveFormat === "both" && saveZip.checked ? `${name}.zip` : null;
+    const zipName = format === "zip" ? `${name}.zip` : null;
     return { files, zipName };
   }
 
   function updateExtLabel() {
-    if (saveFormat === "both") {
-      saveExt.textContent = saveZip.checked ? ".zip" : ".sdf / .wbt";
-    } else {
-      saveExt.textContent = `.${saveFormat}`;
-    }
+    saveExt.textContent = FORMAT_EXTS[saveFormat()];
     resetOverwrite();
   }
 
@@ -1191,15 +1173,14 @@
     return true;
   }
 
-  async function openSaveDialog(format) {
-    closeExportMenu();
+  async function openSaveDialog() {
     if (!hasAnythingToExport()) {
       statusText.textContent = "壁もドアもオブジェクトもありません。先に配置してください。";
       return;
     }
-    saveFormat = format;
-    saveTitle.textContent = `エクスポート: ${FORMAT_LABELS[format]}`;
-    saveZipRow.hidden = format !== "both";
+    const lastFormat = storageGet(SAVE_FORMAT_KEY);
+    for (const radio of saveFormatRadios) radio.checked = radio.value === (lastFormat || "sdf");
+    if (!document.querySelector('input[name="save-format"]:checked')) saveFormatRadios[0].checked = true;
     saveFilename.value = storageGet(SAVE_NAME_KEY) || "building";
     updateExtLabel();
     saveModal.hidden = false;
@@ -1240,6 +1221,7 @@
     const data = await res.json();
     storageSet(SAVE_DIR_KEY, saveDir);
     storageSet(SAVE_NAME_KEY, name);
+    storageSet(SAVE_FORMAT_KEY, saveFormat());
     closeSaveDialog();
     statusText.textContent = `保存しました: ${data.saved.join(", ")} (${summaryText()})`;
   }
@@ -1254,25 +1236,24 @@
     // ブラウザのダウンロードは複数ファイルを確実には落とせないので、両方の場合は常にzip
     if (files.length > 1) {
       window.BuildingEditorExport.downloadZip(files, `${name}.zip`);
-    } else if (saveFormat === "sdf") {
+    } else if (saveFormat() === "sdf") {
       window.BuildingEditorExport.downloadSDF(files[0].text, files[0].name);
     } else {
       window.BuildingEditorExport.downloadWBT(files[0].text, files[0].name);
     }
     storageSet(SAVE_NAME_KEY, name);
+    storageSet(SAVE_FORMAT_KEY, saveFormat());
     closeSaveDialog();
     statusText.textContent = `ダウンロードしました (${summaryText()})`;
   }
 
-  exportSdfItem.addEventListener("click", () => openSaveDialog("sdf"));
-  exportWbtItem.addEventListener("click", () => openSaveDialog("wbt"));
-  exportBothItem.addEventListener("click", () => openSaveDialog("both"));
+  exportBtn.addEventListener("click", () => openSaveDialog());
 
   saveFilename.addEventListener("input", resetOverwrite);
   saveFilename.addEventListener("keydown", (evt) => {
     if (evt.key === "Enter") saveToServer();
   });
-  saveZip.addEventListener("change", updateExtLabel);
+  for (const radio of saveFormatRadios) radio.addEventListener("change", updateExtLabel);
   savePath.addEventListener("keydown", (evt) => {
     if (evt.key === "Enter") browseTo(savePath.value.trim());
   });
