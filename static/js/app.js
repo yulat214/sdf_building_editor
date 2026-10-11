@@ -936,7 +936,9 @@
 
   function handleKeyDown(evt) {
     if (evt.key !== "Escape") return;
-    if (!exportMenu.hidden) {
+    if (!saveModal.hidden) {
+      closeSaveDialog();
+    } else if (!exportMenu.hidden) {
       closeExportMenu();
     } else if (!previewModal.hidden) {
       closePreview();
@@ -1079,45 +1081,226 @@
   document.addEventListener("click", () => closeExportMenu());
   exportMenu.addEventListener("click", (evt) => evt.stopPropagation());
 
-  exportSdfItem.addEventListener("click", () => {
-    closeExportMenu();
-    if (!hasAnythingToExport()) {
-      statusText.textContent = "壁もドアもオブジェクトもありません。先に配置してください。";
-      return;
-    }
-    const sdf = window.BuildingEditorExport.wallsToSDF(walls, doors, objects, exportOptions());
-    window.BuildingEditorExport.downloadSDF(sdf, "building.sdf");
-    statusText.textContent = `SDFをダウンロードしました (${summaryText()})`;
-  });
+  // --- 保存ダイアログ ---
+  // サーバ(=docker内)のファイルシステムへ直接保存する。保存先の初期値は
+  // building_editorを起動したディレクトリで、前回保存したディレクトリを覚えておく。
+  const saveModal = document.getElementById("save-modal");
+  const saveTitle = document.getElementById("save-title");
+  const saveFilename = document.getElementById("save-filename");
+  const saveExt = document.getElementById("save-ext");
+  const saveZipRow = document.getElementById("save-zip-row");
+  const saveZip = document.getElementById("save-zip");
+  const savePath = document.getElementById("save-path");
+  const saveList = document.getElementById("save-list");
+  const saveMessage = document.getElementById("save-message");
+  const saveOkBtn = document.getElementById("save-ok-btn");
 
-  exportWbtItem.addEventListener("click", () => {
-    closeExportMenu();
-    if (!hasAnythingToExport()) {
-      statusText.textContent = "壁もドアもオブジェクトもありません。先に配置してください。";
-      return;
-    }
-    const wbt = window.BuildingEditorExport.wallsToWBT(walls, doors, objects, exportOptions());
-    window.BuildingEditorExport.downloadWBT(wbt, "building.wbt");
-    statusText.textContent = `Webots(.wbt)をダウンロードしました (${summaryText()})`;
-  });
+  const SAVE_DIR_KEY = "buildingEditor.exportDir";
+  const SAVE_NAME_KEY = "buildingEditor.exportName";
+  const FORMAT_LABELS = { sdf: "SDF (.sdf)", wbt: "Webots (.wbt)", both: "SDF + Webots" };
+  let saveFormat = "sdf";
+  let saveDir = null;
+  let saveStartDir = null;
+  let saveParentDir = null;
+  let overwritePending = false;
 
-  exportBothItem.addEventListener("click", () => {
-    closeExportMenu();
-    if (!hasAnythingToExport()) {
-      statusText.textContent = "壁もドアもオブジェクトもありません。先に配置してください。";
-      return;
-    }
+  function storageGet(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+
+  function storageSet(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) { /* 保存できなくても動作には影響しない */ }
+  }
+
+  function baseName() {
+    // 拡張子付きで入力されても二重にならないよう落とす
+    return saveFilename.value.trim().replace(/\.(sdf|wbt|zip)$/i, "");
+  }
+
+  function outputFiles() {
+    const name = baseName();
     const options = exportOptions();
-    const sdf = window.BuildingEditorExport.wallsToSDF(walls, doors, objects, options);
-    const wbt = window.BuildingEditorExport.wallsToWBT(walls, doors, objects, options);
-    window.BuildingEditorExport.downloadZip(
-      [
-        { name: "building.sdf", text: sdf },
-        { name: "building.wbt", text: wbt },
-      ],
-      "building.zip"
-    );
-    statusText.textContent = `SDF+Webotsをzipでダウンロードしました (${summaryText()})`;
+    const files = [];
+    if (saveFormat !== "wbt") {
+      files.push({ name: `${name}.sdf`, text: window.BuildingEditorExport.wallsToSDF(walls, doors, objects, options) });
+    }
+    if (saveFormat !== "sdf") {
+      files.push({ name: `${name}.wbt`, text: window.BuildingEditorExport.wallsToWBT(walls, doors, objects, options) });
+    }
+    const zipName = saveFormat === "both" && saveZip.checked ? `${name}.zip` : null;
+    return { files, zipName };
+  }
+
+  function updateExtLabel() {
+    if (saveFormat === "both") {
+      saveExt.textContent = saveZip.checked ? ".zip" : ".sdf / .wbt";
+    } else {
+      saveExt.textContent = `.${saveFormat}`;
+    }
+    resetOverwrite();
+  }
+
+  function resetOverwrite() {
+    overwritePending = false;
+    saveOkBtn.textContent = "ここに保存";
+    saveMessage.textContent = "";
+  }
+
+  async function apiError(res) {
+    try {
+      const body = await res.json();
+      const detail = body.detail ?? body.error; // アクセス制限(access_control)は error キーで返す
+      return typeof detail === "string" ? detail : JSON.stringify(detail);
+    } catch (e) {
+      return `HTTP ${res.status}`;
+    }
+  }
+
+  async function browseTo(path) {
+    const url = path ? `/api/fs/list?path=${encodeURIComponent(path)}` : "/api/fs/list";
+    const res = await fetch(url);
+    if (!res.ok) {
+      saveMessage.textContent = `開けません: ${await apiError(res)}`;
+      savePath.value = saveDir || "";
+      return false;
+    }
+    const data = await res.json();
+    saveDir = data.path;
+    saveStartDir = data.start;
+    saveParentDir = data.parent;
+    savePath.value = data.path;
+    saveList.innerHTML = "";
+    for (const d of data.dirs) {
+      const li = document.createElement("li");
+      li.textContent = `📁 ${d}/`;
+      li.addEventListener("click", () => browseTo(`${data.path.replace(/\/$/, "")}/${d}`));
+      saveList.appendChild(li);
+    }
+    for (const f of data.files) {
+      const li = document.createElement("li");
+      li.className = "file";
+      li.textContent = `📄 ${f}`;
+      li.title = "クリックでファイル名に使う";
+      li.addEventListener("click", () => {
+        saveFilename.value = f.replace(/\.(sdf|wbt|zip|world)$/i, "");
+        resetOverwrite();
+      });
+      saveList.appendChild(li);
+    }
+    resetOverwrite();
+    return true;
+  }
+
+  async function openSaveDialog(format) {
+    closeExportMenu();
+    if (!hasAnythingToExport()) {
+      statusText.textContent = "壁もドアもオブジェクトもありません。先に配置してください。";
+      return;
+    }
+    saveFormat = format;
+    saveTitle.textContent = `エクスポート: ${FORMAT_LABELS[format]}`;
+    saveZipRow.hidden = format !== "both";
+    saveFilename.value = storageGet(SAVE_NAME_KEY) || "building";
+    updateExtLabel();
+    saveModal.hidden = false;
+    const ok = await browseTo(storageGet(SAVE_DIR_KEY));
+    if (!ok) await browseTo(null); // 前回のディレクトリが消えていたら起動ディレクトリへ
+    saveFilename.focus();
+    saveFilename.select();
+  }
+
+  function closeSaveDialog() {
+    saveModal.hidden = true;
+  }
+
+  async function saveToServer() {
+    const name = baseName();
+    if (!name || /[\/\\]/.test(name)) {
+      saveMessage.textContent = "ファイル名を正しく入力してください(/ は使えません)";
+      return;
+    }
+    const { files, zipName } = outputFiles();
+    const res = await fetch("/api/export/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir: saveDir, files, zip_name: zipName, overwrite: overwritePending }),
+    });
+    if (res.status === 409) {
+      const body = await res.json();
+      const existing = (body.detail && body.detail.existing) || [];
+      overwritePending = true;
+      saveOkBtn.textContent = "上書き保存";
+      saveMessage.textContent = `既に存在します: ${existing.join(", ")} — 上書きするにはもう一度押してください`;
+      return;
+    }
+    if (!res.ok) {
+      saveMessage.textContent = `保存に失敗しました: ${await apiError(res)}`;
+      return;
+    }
+    const data = await res.json();
+    storageSet(SAVE_DIR_KEY, saveDir);
+    storageSet(SAVE_NAME_KEY, name);
+    closeSaveDialog();
+    statusText.textContent = `保存しました: ${data.saved.join(", ")} (${summaryText()})`;
+  }
+
+  function downloadInBrowser() {
+    const name = baseName();
+    if (!name) {
+      saveMessage.textContent = "ファイル名を入力してください";
+      return;
+    }
+    const { files } = outputFiles();
+    // ブラウザのダウンロードは複数ファイルを確実には落とせないので、両方の場合は常にzip
+    if (files.length > 1) {
+      window.BuildingEditorExport.downloadZip(files, `${name}.zip`);
+    } else if (saveFormat === "sdf") {
+      window.BuildingEditorExport.downloadSDF(files[0].text, files[0].name);
+    } else {
+      window.BuildingEditorExport.downloadWBT(files[0].text, files[0].name);
+    }
+    storageSet(SAVE_NAME_KEY, name);
+    closeSaveDialog();
+    statusText.textContent = `ダウンロードしました (${summaryText()})`;
+  }
+
+  exportSdfItem.addEventListener("click", () => openSaveDialog("sdf"));
+  exportWbtItem.addEventListener("click", () => openSaveDialog("wbt"));
+  exportBothItem.addEventListener("click", () => openSaveDialog("both"));
+
+  saveFilename.addEventListener("input", resetOverwrite);
+  saveFilename.addEventListener("keydown", (evt) => {
+    if (evt.key === "Enter") saveToServer();
+  });
+  saveZip.addEventListener("change", updateExtLabel);
+  savePath.addEventListener("keydown", (evt) => {
+    if (evt.key === "Enter") browseTo(savePath.value.trim());
+  });
+  document.getElementById("save-up-btn").addEventListener("click", () => {
+    if (saveParentDir) browseTo(saveParentDir);
+  });
+  document.getElementById("save-start-btn").addEventListener("click", () => browseTo(saveStartDir));
+  document.getElementById("save-home-btn").addEventListener("click", () => browseTo("~"));
+  document.getElementById("save-mkdir-btn").addEventListener("click", async () => {
+    const name = window.prompt("新しいフォルダ名");
+    if (!name) return;
+    const res = await fetch("/api/fs/mkdir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: saveDir, name }),
+    });
+    if (!res.ok) {
+      saveMessage.textContent = `フォルダを作れません: ${await apiError(res)}`;
+      return;
+    }
+    browseTo((await res.json()).path);
+  });
+  saveOkBtn.addEventListener("click", saveToServer);
+  document.getElementById("save-download-btn").addEventListener("click", downloadInBrowser);
+  document.getElementById("save-cancel-btn").addEventListener("click", closeSaveDialog);
+  document.getElementById("save-close-btn").addEventListener("click", closeSaveDialog);
+  saveModal.addEventListener("click", (evt) => {
+    if (evt.target === saveModal) closeSaveDialog();
   });
 
   resizeCanvas();

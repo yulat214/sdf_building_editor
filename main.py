@@ -25,6 +25,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 OBJECTS_DIR = Path(os.environ.get("BUILDING_EDITOR_OBJECTS_DIR", "/root/objects"))
 OBJECTS_DIR.mkdir(parents=True, exist_ok=True)
+OBJECTS_DIR = OBJECTS_DIR.resolve()
 
 MESH_EXTS = {".obj", ".dae", ".stl"}
 TEXTURE_EXTS = {".png", ".jpg", ".jpeg"}
@@ -46,6 +47,30 @@ USER_AGENT = "sdf_building_editor/1.0"
 FUEL_API_BASE = "https://fuel.gazebosim.org/1.0"
 FUEL_CATALOG_PATH = os.path.join(BASE_DIR, "fuel_catalog.json")
 FUEL_ICON_DIR_NAME = "fuel_icons"
+
+
+def match_owner(path: Path, ref_dir: Path):
+    """pathの所有者をref_dirの所有者に揃える(ディレクトリなら配下も再帰的に)。
+
+    コンテナはrootで動いているため、ホストからマウントしたワークスペース(uid 1000所有)に
+    書いたファイルがroot所有になり、ホスト側でgit pull/rm・削除・上書きができなくなる。
+    書き込み先ディレクトリの所有者に合わせておけばホスト側から普通に扱える。
+    root以外で動かしている場合はchownできないので何もしない(作成者=実行ユーザのまま)。
+    """
+    if os.geteuid() != 0:
+        return
+    st = ref_dir.stat()
+    if st.st_uid == 0 and st.st_gid == 0:
+        return
+    paths = [path]
+    if path.is_dir():
+        paths += list(path.rglob("*"))
+    for p in paths:
+        try:
+            if p.lstat().st_uid != st.st_uid or p.lstat().st_gid != st.st_gid:
+                os.lchown(p, st.st_uid, st.st_gid)
+        except OSError:
+            pass
 
 
 def slugify(name: str) -> str:
@@ -712,6 +737,8 @@ def import_object(req: ImportRequest):
                 fix_dae_texture_paths(obj_dir, Path(mesh_path))
             else:
                 ensure_texture_mtl(obj_dir, mesh_path, texture_paths)
+            # 所有者修正の導入前にroot所有でキャッシュされた個体もここで直す
+            match_owner(obj_dir, OBJECTS_DIR)
             mesh_url, mtl_url = mesh_urls_for(mesh_path)
             return {
                 "name": req.name,
@@ -739,6 +766,9 @@ def import_object(req: ImportRequest):
             zf.extractall(obj_dir)
     except zipfile.BadZipFile as e:
         raise HTTPException(status_code=502, detail=f"invalid archive from Fuel: {e}")
+    finally:
+        # 以降で失敗して途中のまま残っても、ホスト側から消せるようにしておく
+        match_owner(obj_dir, OBJECTS_DIR)
 
     mesh_path, texture_paths = existing_object_files(obj_dir)
     if not mesh_path:
@@ -759,6 +789,7 @@ def import_object(req: ImportRequest):
 
     scale = read_sdf_mesh_scale(obj_dir)
     write_scale(obj_dir, scale)
+    match_owner(obj_dir, OBJECTS_DIR)
     mesh_url, mtl_url = mesh_urls_for(mesh_path)
 
     return {
@@ -773,6 +804,119 @@ def import_object(req: ImportRequest):
         "footprint": compute_footprint(mesh_path, scale),
         "base_color": None,
     }
+
+
+# --- エクスポートのサーバ側保存 ---
+# ブラウザのダウンロードだとWindows側のDownloadsに落ち、docker内のワークスペースへ
+# 手で移す必要がある。サーバ(=docker内)のファイルシステムへ直接書き込めるようにし、
+# 保存先ダイアログの初期位置はbuilding_editorを起動したディレクトリにする。
+EXPORT_START_DIR = Path(
+    os.environ.get("BUILDING_EDITOR_EXPORT_DIR", os.getcwd())
+).resolve()
+EXPORT_EXTS = {".sdf", ".wbt", ".zip", ".world"}
+
+
+def resolve_dir(path: str | None) -> Path:
+    p = Path(path).expanduser() if path else EXPORT_START_DIR
+    if not p.is_absolute():
+        p = EXPORT_START_DIR / p
+    p = p.resolve()
+    if not p.is_dir():
+        raise HTTPException(status_code=404, detail=f"directory not found: {p}")
+    return p
+
+
+def validate_filename(name: str) -> str:
+    name = name.strip()
+    if not name or name in {".", ".."} or "/" in name or "\\" in name or "\0" in name:
+        raise HTTPException(status_code=400, detail=f"invalid file name: {name!r}")
+    return name
+
+
+@app.get("/api/fs/list")
+def fs_list(path: str | None = None):
+    d = resolve_dir(path)
+    dirs, files = [], []
+    try:
+        entries = sorted(d.iterdir(), key=lambda e: e.name.lower())
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"permission denied: {d}")
+    for e in entries:
+        if e.name.startswith("."):
+            continue
+        try:
+            if e.is_dir():
+                dirs.append(e.name)
+            elif e.suffix.lower() in EXPORT_EXTS:
+                files.append(e.name)
+        except OSError:
+            continue
+    return {
+        "path": str(d),
+        "parent": str(d.parent) if d.parent != d else None,
+        "start": str(EXPORT_START_DIR),
+        "dirs": dirs,
+        "files": files,
+    }
+
+
+class MkdirRequest(BaseModel):
+    path: str
+    name: str
+
+
+@app.post("/api/fs/mkdir")
+def fs_mkdir(req: MkdirRequest):
+    target = resolve_dir(req.path) / validate_filename(req.name)
+    try:
+        target.mkdir(exist_ok=False)
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail=f"already exists: {target}")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"permission denied: {target}")
+    match_owner(target, target.parent)
+    return {"path": str(target)}
+
+
+class ExportFile(BaseModel):
+    name: str
+    text: str
+
+
+class ExportSaveRequest(BaseModel):
+    dir: str
+    files: list[ExportFile]
+    # zip_name があれば files をまとめて1つのzipとして保存する
+    zip_name: str | None = None
+    overwrite: bool = False
+
+
+@app.post("/api/export/save")
+def export_save(req: ExportSaveRequest):
+    d = resolve_dir(req.dir)
+    if req.zip_name:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in req.files:
+                zf.writestr(validate_filename(f.name), f.text)
+        outputs = [(d / validate_filename(req.zip_name), buf.getvalue())]
+    else:
+        outputs = [(d / validate_filename(f.name), f.text.encode("utf-8")) for f in req.files]
+
+    # 1つでも既存ファイルがあれば何も書かずに知らせ、上書き確認はUI側で行う。
+    existing = [str(p) for p, _ in outputs if p.exists()]
+    if existing and not req.overwrite:
+        raise HTTPException(status_code=409, detail={"existing": existing})
+
+    saved = []
+    for p, data in outputs:
+        try:
+            p.write_bytes(data)
+        except (PermissionError, IsADirectoryError) as e:
+            raise HTTPException(status_code=403, detail=f"cannot write {p}: {e}")
+        match_owner(p, d)
+        saved.append(str(p))
+    return {"saved": saved}
 
 
 app.mount("/objects", StaticFiles(directory=OBJECTS_DIR), name="objects")

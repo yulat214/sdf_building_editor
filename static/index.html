@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Building Editor</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=11">
+  <link rel="stylesheet" href="/static/css/style.css?v=12">
   <script type="importmap">
     { "imports": { "three": "/static/vendor/three/three.module.js" } }
   </script>
@@ -75,13 +75,48 @@
     <canvas id="preview-canvas"></canvas>
   </div>
 
+  <div id="save-modal" class="save-modal" hidden>
+    <div class="save-dialog">
+      <div class="save-dialog-header">
+        <span id="save-title">エクスポート</span>
+        <button id="save-close-btn">×</button>
+      </div>
+      <div class="save-dialog-body">
+        <label class="save-row">ファイル名
+          <input type="text" id="save-filename" value="building" spellcheck="false">
+          <span id="save-ext" class="save-ext">.sdf</span>
+        </label>
+        <label class="save-row" id="save-zip-row">
+          <input type="checkbox" id="save-zip"> zipにまとめる (オフなら .sdf と .wbt を並べて保存)
+        </label>
+        <div class="save-row">保存先
+          <input type="text" id="save-path" spellcheck="false" title="パスを直接入力してEnterで移動">
+        </div>
+        <div class="save-nav">
+          <button id="save-up-btn" title="親ディレクトリへ">↑ 上へ</button>
+          <button id="save-start-btn" title="building_editorを起動したディレクトリへ">起動ディレクトリ</button>
+          <button id="save-home-btn">~ ホーム</button>
+          <button id="save-mkdir-btn">＋ 新規フォルダ</button>
+        </div>
+        <ul id="save-list" class="save-list"></ul>
+        <p id="save-message" class="save-message"></p>
+      </div>
+      <div class="save-dialog-footer">
+        <button id="save-download-btn" title="従来どおりブラウザのダウンロードとして保存(Windows側のダウンロードフォルダ等)">ブラウザでダウンロード</button>
+        <span class="save-spacer"></span>
+        <button id="save-cancel-btn">キャンセル</button>
+        <button id="save-ok-btn" class="primary">ここに保存</button>
+      </div>
+    </div>
+  </div>
+
   <footer class="statusbar">
     <span id="status-text">クリックで壁の始点、もう一度クリックで終点</span>
     <span class="statusbar-help">オブジェクト: クリックで選択 / ドラッグで移動 / 右クリックで削除 / スクロールで回転・ズーム / Shift+ドラッグでパン</span>
   </footer>
 
-  <script src="/static/js/export.js?v=11"></script>
-  <script src="/static/js/app.js?v=11"></script>
-  <script type="module" src="/static/js/preview.js?v=11"></script>
+  <script src="/static/js/export.js?v=12"></script>
+  <script src="/static/js/app.js?v=12"></script>
+  <script type="module" src="/static/js/preview.js?v=12"></script>
 </body>
 </html>
